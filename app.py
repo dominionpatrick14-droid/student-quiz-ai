@@ -88,19 +88,16 @@ Requirements:
 - Return only data matching the required JSON structure.
 """
 
-    response = client.models.generate_content(
-        model="gemini-3.8-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-    response_mime_type="application/json",
-    response_schema=schema,
-    temperature=0.7,
-    max_output_tokens=2500,
-    thinking_config=types.ThinkingConfig(
-        thinking_level="low"
+  response = client.models.generate_content(
+    model="gemini-3.8-flash",
+    contents=prompt,
+    config=types.GenerateContentConfig(
+        response_mime_type="application/json",
+        response_schema=schema,
+        temperature=0.7,
+        max_output_tokens=2500,
     ),
-),
-    
+    )
 
     if not response.text:
         raise RuntimeError("The AI returned an empty response. Please try again.")
