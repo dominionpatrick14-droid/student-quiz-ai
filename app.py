@@ -95,7 +95,7 @@ Requirements:
             response_mime_type="application/json",
             response_schema=schema,
             temperature=0.7,
-            max_output_tokens=5000,
+            max_output_tokens=2500,
         ),
     )
 
