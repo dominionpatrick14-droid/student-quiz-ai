@@ -92,12 +92,15 @@ Requirements:
         model="gemini-3.8-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=schema,
-            temperature=0.7,
-            max_output_tokens=2500,
-        ),
-    )
+    response_mime_type="application/json",
+    response_schema=schema,
+    temperature=0.7,
+    max_output_tokens=2500,
+    thinking_config=types.ThinkingConfig(
+        thinking_level="low"
+    ),
+),
+    
 
     if not response.text:
         raise RuntimeError("The AI returned an empty response. Please try again.")
