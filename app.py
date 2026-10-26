@@ -1,8 +1,12 @@
+
 import json
 import os
 import streamlit as st
 from google import genai
 from google.genai import types
+
+
+# ---------------- PAGE SETTINGS ----------------
 
 st.set_page_config(
     page_title="Student Quiz AI",
@@ -10,46 +14,33 @@ st.set_page_config(
     layout="centered",
 )
 
-st.markdown("""
-<style>
-    .main {max-width: 900px; padding-top: 2rem;}
-    .hero {
-        padding: 1.5rem; border-radius: 18px;
-        background: linear-gradient(120deg, #e8f2ff, #f4edff);
-        color: #172554; margin-bottom: 1.2rem;
-    }
-    .hero h1 {margin-bottom: .3rem;}
-    .small-note {color: #64748b; font-size: .9rem;}
-</style>
-""", unsafe_allow_html=True)
+st.title("📚 Student Quiz AI")
+st.write(
+    "Choose a topic, generate practice questions, "
+    "and test what you know."
+)
 
-st.markdown("""
-<div class="hero">
-  <h1>📚 Student Quiz AI</h1>
-  <p>Choose a topic, generate practice questions, and test what you know.</p>
-</div>
-""", unsafe_allow_html=True)
 
+# ---------------- API KEY ----------------
 
 def get_api_key():
-    """Read the API key from Streamlit secrets or an environment variable."""
     try:
         key = st.secrets.get("GEMINI_API_KEY", "")
+        if key:
+            return key
     except Exception:
-        key = ""
-    return key or os.getenv("GEMINI_API_KEY", "")
+        pass
+
+    return os.getenv("GEMINI_API_KEY", "")
 
 
-def generate_quiz(topic, subject, level, count):
-    api_key = get_api_key()
+# ---------------- QUIZ GENERATION ----------------
 
-    if not api_key:
-        raise ValueError(
-            "The Gemini API key is missing. Add GEMINI_API_KEY "
-            "to your Streamlit Cloud Secrets settings."
-        )
-
-    client = genai.Client(api_key=api_key)
+def generate_quiz(api_key, subject, topic, difficulty, count):
+    client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(timeout=45000),
+    )
 
     schema = {
         "type": "OBJECT",
@@ -63,251 +54,263 @@ def generate_quiz(topic, subject, level, count):
                         "question": {"type": "STRING"},
                         "options": {
                             "type": "ARRAY",
-                            "items": {"type": "STRING"}
+                            "items": {"type": "STRING"},
                         },
                         "answer": {"type": "STRING"},
-                        "explanation": {"type": "STRING"}
+                        "explanation": {"type": "STRING"},
                     },
                     "required": [
-                        "question", "options", "answer", "explanation"
-                    ]
-                }
-            }
+                        "question",
+                        "options",
+                        "answer",
+                        "explanation",
+                    ],
+                },
+            },
         },
-        "required": ["title", "questions"]
+        "required": ["title", "questions"],
     }
 
     prompt = f"""
-Create exactly {count} original multiple-choice practice questions.
+Create exactly {count} multiple-choice practice questions.
 
 Subject: {subject}
 Topic: {topic}
-Difficulty: {level}
+Difficulty: {difficulty}
 
-Requirements:
-- Each question must have exactly four options.
-- The answer must exactly match one of the four options.
-- Include a short explanation of why the answer is correct.
-- Keep questions appropriate for a student studying this subject.
-- Make every question clear and self-contained.
-- Return only data matching the required JSON structure.
+Rules:
+- Give exactly 4 options for each question.
+- Make the options different and relevant.
+- The answer must exactly match one option.
+- Keep explanations to one short sentence.
+- Avoid repeating questions.
+- Return only the requested structured quiz.
 """
 
     response = client.models.generate_content(
-        model="gemini-3.8-flash",
+        model="gemini-3.5-flash-lite",
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=schema,
-            temperature=0.7,
-            max_output_tokens=2500,
+            temperature=0.3,
+            max_output_tokens=1200,
         ),
     )
 
     if not response.text:
-        raise RuntimeError(
+        raise ValueError(
             "The AI returned an empty response. Please try again."
         )
 
-    data = json.loads(response.text)
-    questions = data.get("questions", [])
+    quiz = json.loads(response.text)
+    questions = quiz.get("questions", [])
 
-    if not questions:
-        raise RuntimeError(
-            "The AI did not return any questions. Please try again."
+    if len(questions) != count:
+        raise ValueError(
+            f"The AI returned {len(questions)} questions "
+            f"instead of {count}. Please try again."
         )
 
-    for question in questions:
-        if (
-            not isinstance(question.get("options"), list)
-            or len(question["options"]) != 4
-        ):
-            raise RuntimeError(
-                "The AI returned a question without exactly four options. "
+    for number, question in enumerate(questions, start=1):
+        options = question.get("options", [])
+        answer = question.get("answer", "")
+
+        if len(options) != 4:
+            raise ValueError(
+                f"Question {number} does not have exactly 4 options."
+            )
+
+        if answer not in options:
+            raise ValueError(
+                f"Question {number} has an invalid answer. "
                 "Please generate the quiz again."
             )
 
-        if question.get("answer") not in question["options"]:
-            raise RuntimeError(
-                "A generated answer did not match its options. "
-                "Please generate the quiz again."
-            )
-
-    return data
+    return quiz
 
 
-with st.form("quiz_form"):
-    left, right = st.columns(2)
+# ---------------- QUIZ SETTINGS ----------------
 
-    with left:
-        subject = st.selectbox(
-            "Subject",
-            [
-                "Mathematics", "Physics", "Chemistry", "Biology",
-                "Computer Studies", "English",
-                "General Knowledge", "Other"
-            ],
+subject = st.selectbox(
+    "Choose a subject",
+    [
+        "Mathematics",
+        "English",
+        "Biology",
+        "Chemistry",
+        "Physics",
+        "Computer Science",
+        "General Knowledge",
+        "Business Studies",
+        "Other",
+    ],
+)
+
+topic = st.text_input(
+    "Enter your topic",
+    placeholder="Example: Photosynthesis",
+)
+
+difficulty = st.selectbox(
+    "Choose difficulty",
+    ["Easy", "Medium", "Hard"],
+)
+
+count = st.slider(
+    "Number of questions",
+    min_value=3,
+    max_value=10,
+    value=3,
+)
+
+generate_button = st.button(
+    "Generate Quiz",
+    type="primary",
+    use_container_width=True,
+)
+
+
+# ---------------- GENERATE AND SAVE QUIZ ----------------
+
+if generate_button:
+    api_key = get_api_key()
+
+    if not api_key:
+        st.error(
+            "API key not found. Add GEMINI_API_KEY "
+            "in your Streamlit app's Secrets settings."
         )
+        st.stop()
 
-        level = st.selectbox(
-            "Difficulty",
-            ["Beginner", "Intermediate", "Advanced"]
-        )
-
-    with right:
-        count = st.slider(
-            "Number of questions",
-            min_value=3,
-            max_value=10,
-            value=5
-        )
-
-        topic = st.text_input(
-            "Topic",
-            placeholder="e.g. Newton's laws, fractions, HTML basics",
-        )
-
-    submitted = st.form_submit_button(
-        "✨ Generate my quiz",
-        use_container_width=True
-    )
-
-
-if submitted:
     if not topic.strip():
         st.warning("Please enter a topic first.")
-    else:
-        with st.spinner("Creating your questions..."):
-            try:
-                quiz = generate_quiz(
-                    topic.strip(), subject, level, count
-                )
+        st.stop()
 
-                st.session_state["quiz_data"] = quiz
-                st.session_state["quiz_topic"] = topic.strip()
-                st.session_state["quiz_level"] = level
-                st.session_state["answers"] = {}
+    st.session_state.pop("quiz", None)
+    st.session_state.pop("submitted_answers", None)
+    st.session_state.pop("score", None)
 
-            except Exception as exc:
-                message = str(exc)
-                lower_message = message.lower()
-
-                if (
-                    "api_key_invalid" in lower_message
-                    or "invalid api key" in lower_message
-                    or "api key not valid" in lower_message
-                ):
-                    st.error(
-                        "Your Gemini API key appears invalid. "
-                        "Check the key in Streamlit Secrets."
-                    )
-                elif (
-                    "429" in message
-                    or "resource_exhausted" in lower_message
-                    or "quota" in lower_message
-                ):
-                    st.error(
-                        "The API usage limit may have been reached. "
-                        "Wait a little and try again."
-                    )
-                elif (
-                    "503" in message
-                    or "unavailable" in lower_message
-                ):
-                    st.error(
-                        "The AI model may be busy. Wait a little "
-                        "and try again."
-                    )
-                else:
-                    st.error(f"Could not generate the quiz: {message}")
-
-                st.caption(
-                    "If the problem continues, check the app logs "
-                    "and your Gemini API settings."
-                )
-
-
-quiz_data = st.session_state.get("quiz_data")
-
-if quiz_data:
-    st.divider()
-    st.subheader(quiz_data.get("title", "Your practice quiz"))
-
-    st.caption(
-        f"Topic: {st.session_state.get('quiz_topic', '')} · "
-        f"Difficulty: {st.session_state.get('quiz_level', '')}"
-    )
-
-    with st.form("answer_form"):
-        selected_answers = {}
-
-        for i, question in enumerate(
-            quiz_data.get("questions", []), start=1
+    try:
+        with st.spinner(
+            "Creating your questions. This should not take minutes..."
         ):
-            st.markdown(
-                f"**{i}. {question.get('question', 'Question')}**"
+            quiz = generate_quiz(
+                api_key=api_key,
+                subject=subject,
+                topic=topic.strip(),
+                difficulty=difficulty,
+                count=count,
             )
 
-            options = question.get("options", [])
+        st.session_state["quiz"] = quiz
+        st.session_state["submitted_answers"] = {}
 
-            selected_answers[str(i)] = st.radio(
-                "Choose one answer:",
-                options=options,
+    except Exception as error:
+        message = str(error)
+        lower_message = message.lower()
+
+        if "timeout" in lower_message or "timed out" in lower_message:
+            st.error(
+                "The AI took too long to respond. "
+                "Try again shortly."
+            )
+        elif "429" in message or "resource_exhausted" in lower_message:
+            st.error(
+                "The AI service limit has been reached. "
+                "Wait a little before trying again."
+            )
+        elif (
+            "503" in message
+            or "unavailable" in lower_message
+            or "overloaded" in lower_message
+        ):
+            st.error(
+                "The AI service is busy right now. "
+                "Please try again later."
+            )
+        elif (
+            "401" in message
+            or "403" in message
+            or "api key" in lower_message
+            or "permission denied" in lower_message
+        ):
+            st.error(
+                "The API key may be invalid or lack permission. "
+                "Check your Streamlit Secrets settings."
+            )
+        else:
+            st.error(f"Quiz generation failed: {message}")
+
+
+# ---------------- DISPLAY QUIZ ----------------
+
+if "quiz" in st.session_state:
+    quiz = st.session_state["quiz"]
+
+    st.divider()
+    st.subheader(quiz.get("title", "Your Practice Quiz"))
+
+    with st.form("quiz_answer_form"):
+        selected_answers = {}
+
+        for index, question in enumerate(
+            quiz["questions"]
+        ):
+            st.markdown(
+                f"**Question {index + 1}: "
+                f"{question['question']}**"
+            )
+
+            selected_answers[index] = st.radio(
+                "Choose your answer:",
+                question["options"],
                 index=None,
-                key=f"answer_{i}_{st.session_state.get('quiz_topic', '')}",
+                key=f"answer_{index}",
                 label_visibility="collapsed",
             )
 
-            st.write("")
-
-        checked = st.form_submit_button(
-            "Check my answers",
-            use_container_width=True
+        submitted = st.form_submit_button(
+            "Check My Answers",
+            use_container_width=True,
         )
 
-    if checked:
-        correct = 0
-        total = len(quiz_data.get("questions", []))
+    if submitted:
+        score = 0
 
-        for i, question in enumerate(
-            quiz_data.get("questions", []), start=1
-        ):
-            chosen = selected_answers.get(str(i))
-            answer = question.get("answer", "")
+        for index, question in enumerate(quiz["questions"]):
+            if selected_answers[index] == question["answer"]:
+                score += 1
 
-            is_correct = (
-                chosen is not None
-                and chosen.strip() == answer.strip()
-            )
+        st.session_state["submitted_answers"] = selected_answers
+        st.session_state["score"] = score
 
-            if is_correct:
-                correct += 1
+    if "score" in st.session_state:
+        score = st.session_state["score"]
+        total = len(quiz["questions"])
 
-            with st.container(border=True):
-                if is_correct:
-                    st.markdown(f"**Question {i}: ✅ Correct**")
-                elif chosen is None:
-                    st.markdown(f"**Question {i}: ⚪ Not answered**")
-                else:
-                    st.markdown(f"**Question {i}: ❌ Not quite**")
+        st.divider()
+        st.subheader(f"Your Score: {score}/{total}")
+        st.progress(score / total)
 
-                st.write(f"**Correct answer:** {answer}")
+        for index, question in enumerate(quiz["questions"]):
+            chosen = st.session_state["submitted_answers"][index]
+            correct = question["answer"]
 
-                explanation = question.get("explanation", "")
-                if explanation:
-                    st.write(f"**Explanation:** {explanation}")
+            st.markdown(f"**Question {index + 1}**")
 
-        if total:
-            percentage = round(correct / total * 100)
-            st.success(
-                f"Your score: {correct} out of {total} ({percentage}%)"
-            )
+            if chosen == correct:
+                st.success(f"Correct! {correct}")
+            else:
+                st.error(
+                    f"Your answer: {chosen or 'Not answered'}"
+                )
+                st.info(f"Correct answer: {correct}")
 
+            st.write(f"Explanation: {question['explanation']}")
 
-st.markdown("---")
-st.markdown(
-    '<p class="small-note">Made as a learning project. '
-    'AI-generated questions can sometimes be wrong, so check '
-    'important answers against your class notes or textbook.</p>',
-    unsafe_allow_html=True,
-    )
+        if st.button("Generate Another Quiz"):
+            st.session_state.pop("quiz", None)
+            st.session_state.pop("submitted_answers", None)
+            st.session_state.pop("score", None)
+            st.rerun()
